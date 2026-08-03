@@ -45,8 +45,8 @@ class EdifactViewerApp:
 
         # Encoding-Auswahl
         ttk.Label(top_frame, text="Encoding:").pack(side=tk.LEFT, padx=(5, 5))
-        self.encoding_var = tk.StringVar(value="iso-8859-1")
-        encoding_options = ["iso-8859-1", "windows-1252", "utf-8", "ascii"]
+        self.encoding_var = tk.StringVar(value="iso-8859-15")
+        encoding_options = ["iso-8859-15", "iso-8859-1", "windows-1252", "utf-8", "ascii"]
         self.combo_encoding = ttk.Combobox(top_frame, textvariable=self.encoding_var, values=encoding_options, width=12, state="readonly")
         self.combo_encoding.pack(side=tk.LEFT, padx=(0, 20))
         self.combo_encoding.bind("<<ComboboxSelected>>", self.reload_file_with_new_encoding)
