@@ -84,7 +84,7 @@ class EdifactViewerApp:
 
         # 2. Hauptbereich: Treeview
         main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.pack(anchor="center", expand=True, fill=tk.BOTH)
+        main_frame.pack(anchor=tk.CENTER, expand=True, fill=tk.BOTH)
 
         columns = ("Wert",)
         self.tree = ttk.Treeview(main_frame, columns=columns, selectmode="browse")
@@ -92,6 +92,16 @@ class EdifactViewerApp:
         self.tree.heading("Wert", text="Inhalt / Wert", anchor=tk.W)
         self.tree.column("#0", width=400, minwidth=200)
         self.tree.column("Wert", width=550, minwidth=200)
+
+        # --- NEU: Kontextmenü und Tastenkombination für das Kopieren ---
+        self.tree_menu = tk.Menu(self.root, tearoff=0)
+        self.tree_menu.add_command(label="Wert kopieren", command=self.copy_value_to_clipboard)
+        self.tree_menu.add_command(label="Ganzen Eintrag kopieren", command=self.copy_row_to_clipboard)
+
+        # Rechtsklick-Event und Strg+C binden
+        self.tree.bind("<Button-3>", self.show_tree_context_menu)
+        self.tree.bind("<Control-c>", lambda e: self.copy_value_to_clipboard())
+        # -------------------------------------------------------------
 
         vsb = ttk.Scrollbar(main_frame, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(main_frame, orient="horizontal", command=self.tree.xview)
@@ -103,6 +113,47 @@ class EdifactViewerApp:
         
         main_frame.grid_columnconfigure(0, weight=1)
         main_frame.grid_rowconfigure(0, weight=1)
+
+    def show_tree_context_menu(self, event):
+        """Öffnet das Kontextmenü per Rechtsklick auf den passenden Baum-Eintrag."""
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.tree_menu.tk_popup(event.x_root, event.y_root)
+
+    def copy_value_to_clipboard(self):
+        """Kopiert den reinen Wert (oder Titel, falls kein Wert existiert) in die Zwischenablage."""
+        selected_items = self.tree.selection()
+        if not selected_items:
+            return
+        item = selected_items[0]
+        
+        values = self.tree.item(item, "values")
+        if values and values[0]:
+            text_to_copy = str(values[0])
+        else:
+            text_to_copy = self.tree.item(item, "text").strip()
+        
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text_to_copy)
+
+    def copy_row_to_clipboard(self):
+        """Kopiert die Kombination aus Feldbezeichnung und Wert in die Zwischenablage."""
+        selected_items = self.tree.selection()
+        if not selected_items:
+            return
+        item = selected_items[0]
+        
+        text = self.tree.item(item, "text").strip()
+        values = self.tree.item(item, "values")
+        
+        if values and values[0]:
+            text_to_copy = f"{text}: {values[0]}"
+        else:
+            text_to_copy = text
+            
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text_to_copy)
 
     def load_file(self):
         filepath = filedialog.askopenfilename(

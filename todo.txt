@@ -1,0 +1,3 @@
+(A) 2026-08-03 Kopierfunktion in Baumstruktur sollte beim Kopieren vom ganzen Datensatz entweder die entsprechende Zeile der ESOL-Datei ausgeben, oder den Inhalt des jeweiligen Segmenttyps. Aktuell wird das ausgegeben, was in der GUI angezeigt wird. Inklusive Emojis. +DataExport @code
+(B) 2026-08-03 Sucheingabefeld sollte eine Möglichkeit zum direkten Löschen des eingetragenen Wertes bieten. Momentan muss alles manuell rausgelöscht werden. +DataHandling @GUI
+(B) 2026-08-03 Wenn die IK Nummern angezeigt werden, dann soll es die Möglichkeit geben entweder manuell bei Bedarf, oder schon automatisch während die Datei geladen wird, einen LookUp Dienst zu integrieren, damit die IK-Nummern gleich mit einem Label ausgestattet werden können. +DataImport @code @GUI
