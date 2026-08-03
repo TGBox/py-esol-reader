@@ -29,9 +29,9 @@ class EdifactViewerApp:
         self.btn_open = ttk.Button(top_frame, text="EDIFACT Datei öffnen...", command=self.load_file)
         self.btn_open.pack(side=tk.LEFT, padx=(0, 10))
 
-        # --- NEU: PDF-Export Button ---
-        self.btn_pdf = ttk.Button(top_frame, text="Als PDF exportieren", command=self.export_to_pdf, state=tk.DISABLED)
-        self.btn_pdf.pack(side=tk.LEFT, padx=(0, 10))
+        # --- NEU: Universeller Export-Button ---
+        self.btn_export = ttk.Button(top_frame, text="Daten exportieren...", command=self.export_data, state=tk.DISABLED)
+        self.btn_export.pack(side=tk.LEFT, padx=(0, 10))
 
         self.lbl_filename = ttk.Label(top_frame, text="Keine Datei ausgewählt", foreground="gray")
         self.lbl_filename.pack(side=tk.LEFT, padx=(0, 20))
@@ -88,8 +88,7 @@ class EdifactViewerApp:
         self.search_var.set("")
 
         self.process_and_display()
-        # PDF-Button aktivieren, da nun Daten vorhanden sind
-        self.btn_pdf.config(state=tk.NORMAL)
+        self.btn_export.config(state=tk.NORMAL)
 
     def reload_file_with_new_encoding(self, event=None):
         """Wird aufgerufen, wenn im Dropdown ein anderes Encoding ausgewählt wird."""
@@ -274,6 +273,129 @@ class EdifactViewerApp:
                     insert_nodes(group_id, node["children"])
 
         insert_nodes("", hierarchy_data)
+        
+    def flatten_data_for_table(self):
+        """Wandelt die Baumstruktur in eine flache Tabellenform für CSV und Excel um."""
+        rows = []
+        def traverse(nodes, context=""):
+            for node in nodes:
+                if node["type"] == "segment":
+                    seg_name = node["data"].get("Segment", "")
+                    for k, v in node["data"].items():
+                        if k == "Segment": continue
+                        rows.append({
+                            "Kontext": context,
+                            "Segment": seg_name,
+                            "Feld": k,
+                            "Wert": v if v is not None else ""
+                        })
+                else:
+                    new_context = f"{context} > {node['title']}" if context else node['title']
+                    if "children" in node:
+                        traverse(node["children"], new_context)
+        traverse(self.full_hierarchy)
+        return rows
+
+    def export_data(self):
+        """Öffnet den Speichern-Dialog und exportiert je nach gewählter Dateiendung."""
+        if not hasattr(self, "full_hierarchy") or not self.full_hierarchy:
+            messagebox.showwarning("Keine Daten", "Es sind keine Daten zum Exportieren vorhanden.")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[
+                ("Excel Datei", "*.xlsx"),
+                ("CSV Datei", "*.csv"),
+                ("JSON Datei", "*.json"),
+                ("PDF Dokument", "*.pdf")
+            ],
+            title="Daten exportieren..."
+        )
+        if not filepath:
+            return
+
+        ext = os.path.splitext(filepath)[1].lower()
+
+        try:
+            if ext == ".json":
+                import json
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(self.full_hierarchy, f, ensure_ascii=False, indent=4)
+                messagebox.showinfo("Erfolg", f"Daten erfolgreich als JSON gespeichert unter:\n{filepath}")
+
+            elif ext == ".csv":
+                import csv
+                rows = self.flatten_data_for_table()
+                with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+                    if rows:
+                        writer = csv.DictWriter(f, fieldnames=["Kontext", "Segment", "Feld", "Wert"], delimiter=';')
+                        writer.writeheader()
+                        writer.writerows(rows)
+                messagebox.showinfo("Erfolg", f"Daten erfolgreich als CSV gespeichert unter:\n{filepath}")
+
+            elif ext == ".xlsx":
+                import pandas as pd
+                rows = self.flatten_data_for_table()
+                df = pd.DataFrame(rows)
+                df.to_excel(filepath, index=False)
+                messagebox.showinfo("Erfolg", f"Daten erfolgreich als Excel-Datei gespeichert unter:\n{filepath}")
+
+            elif ext == ".pdf":
+                self.generate_pdf(filepath)
+
+        except Exception as e:
+            messagebox.showerror("Export-Fehler", f"Die Datei konnte nicht exportiert werden:\n\n{e}")
+
+    def generate_pdf(self, filepath):
+        """Generiert das PDF-Dokument (wie zuvor implementiert)."""
+
+        doc = SimpleDocTemplate(filepath, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+        story = []
+        styles = getSampleStyleSheet()
+        
+        title_style = ParagraphStyle('ReportTitle', parent=styles['Heading1'], fontSize=16, spaceAfter=15, textColor=colors.HexColor("#1A365D"))
+        h2_style = ParagraphStyle('ReportH2', parent=styles['Heading2'], fontSize=12, spaceBefore=10, spaceAfter=5, textColor=colors.HexColor("#2B6CB0"))
+
+        story.append(Paragraph("EDIFACT Abrechnungsbericht (§ 302 SGB V)", title_style))
+        story.append(Paragraph(f"Quelldatei: {os.path.basename(getattr(self, 'current_filepath', 'Unbekannt'))}", styles['Normal']))
+        story.append(Spacer(1, 15))
+
+        def process_nodes_for_pdf(nodes):
+            for node in nodes:
+                story.append(Paragraph(node["title"], h2_style))
+                table_data = []
+                def collect_segment_data(n):
+                    if n["type"] == "segment":
+                        for k, v in n["data"].items():
+                            if k == "Segment": continue
+                            table_data.append([str(k), str(v if v is not None else "")])
+                    elif "children" in n:
+                        for child in n["children"]:
+                            collect_segment_data(child)
+
+                if "children" in node:
+                    for child in node["children"]:
+                        collect_segment_data(child)
+
+                if table_data:
+                    t = Table(table_data, colWidths=[200, 335])
+                    t.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F7FAFC")),
+                        ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor("#2D3748")),
+                        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                        ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+                        ('FONTSIZE', (0,0), (-1,-1), 9),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                        ('TOPPADDING', (0,0), (-1,-1), 4),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0"))
+                    ]))
+                    story.append(t)
+                    story.append(Spacer(1, 10))
+
+        process_nodes_for_pdf(self.full_hierarchy)
+        doc.build(story)
+        messagebox.showinfo("Erfolg", f"Das PDF wurde erfolgreich gespeichert unter:\n{filepath}")
         
     def export_to_pdf(self):
         """Generiert ein übersichtliches PDF aus den geparsten Daten."""
