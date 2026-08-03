@@ -18,7 +18,7 @@ class EdifactViewerApp:
         self.setup_ui()
 
     def setup_ui(self):
-        # --- Oberer Bereich: Buttons und Suche ---
+        # --- Oberer Bereich: Buttons, Encoding-Auswahl und Suche ---
         top_frame = ttk.Frame(self.root, padding="10")
         top_frame.pack(side=tk.TOP, fill=tk.X)
 
@@ -27,17 +27,34 @@ class EdifactViewerApp:
         self.btn_open.pack(side=tk.LEFT, padx=(0, 10))
 
         self.lbl_filename = ttk.Label(top_frame, text="Keine Datei ausgewählt", foreground="gray")
-        self.lbl_filename.pack(side=tk.LEFT)
+        self.lbl_filename.pack(side=tk.LEFT, padx=(0, 20))
 
-        # Suchfeld
+        # --- NEU: Encoding-Auswahl ---
+        ttk.Label(top_frame, text="Encoding:").pack(side=tk.LEFT, padx=(5, 5))
+        
+        # Gängige Encodings für EDIFACT / Abrechnungsdaten
+        self.encoding_var = tk.StringVar(value="iso-8859-1") # Standard für § 302 SGB V
+        encoding_options = ["iso-8859-1", "iso-8859-15", "windows-1252", "utf-8", "ascii"]
+        
+        self.combo_encoding = ttk.Combobox(
+            top_frame, 
+            textvariable=self.encoding_var, 
+            values=encoding_options, 
+            width=12, 
+            state="readonly"
+        )
+        self.combo_encoding.pack(side=tk.LEFT, padx=(0, 20))
+        # Wenn das Encoding gewechselt wird und bereits eine Datei offen ist, neu laden:
+        self.combo_encoding.bind("<<ComboboxSelected>>", self.reload_file_with_new_encoding)
+
+        # Suchfeld (rechts)
         search_frame = ttk.Frame(top_frame)
         search_frame.pack(side=tk.RIGHT)
         
         ttk.Label(search_frame, text="Suchen:").pack(side=tk.LEFT, padx=(0, 5))
         self.search_var = tk.StringVar()
-        # Sobald sich der Text im Suchfeld ändert, wird die Suche ausgelöst
         self.search_var.trace_add("write", lambda *args: self.perform_search())
-        self.entry_search = ttk.Entry(search_frame, textvariable=self.search_var, width=30)
+        self.entry_search = ttk.Entry(search_frame, textvariable=self.search_var, width=25)
         self.entry_search.pack(side=tk.LEFT)
 
         # --- Hauptbereich: Treeview ---
@@ -69,20 +86,38 @@ class EdifactViewerApp:
             title="Abrechnungsdatei auswählen",
             filetypes=[("Alle Dateien", "*.*"), ("Textdateien", "*.txt"), ("EDI Dateien", "*.edi")]
         )
-        if not filepath: return
+        if not filepath: 
+            return
 
+        # Den Dateipfad zwischenspeichern, damit man das Encoding später wechseln kann
+        self.current_filepath = filepath
         self.lbl_filename.config(text=os.path.basename(filepath), foreground="black")
-        self.search_var.set("") # Suche zurücksetzen beim Neuladen
+        self.search_var.set("")
 
+        self.process_and_display()
+
+    def reload_file_with_new_encoding(self, event=None):
+        """Wird aufgerufen, wenn im Dropdown ein anderes Encoding ausgewählt wird."""
+        if hasattr(self, "current_filepath") and self.current_filepath:
+            self.process_and_display()
+
+    def process_and_display(self):
+        """Lädt die Datei mit dem aktuell ausgewählten Encoding und aktualisiert den Baum."""
+        selected_encoding = self.encoding_var.get()
+        
         try:
-            # 1. Daten parsen
-            flat_data = self.parser.parse_file(filepath)
-            # 2. Daten hierarchisch strukturieren
+            # Wir übergeben das Encoding an eine neue Methode im Parser (oder öffnen sie direkt hier)
+            flat_data = self.parse_file_with_encoding(self.current_filepath, selected_encoding)
             self.full_hierarchy = self.build_hierarchy(flat_data)
-            # 3. Struktur anzeigen
             self.display_tree(self.full_hierarchy)
         except Exception as e:
-            messagebox.showerror("Fehler beim Lesen", f"Die Datei konnte nicht verarbeitet werden:\n\n{e}")
+            messagebox.showerror("Fehler beim Lesen", f"Die Datei konnte mit dem Encoding '{selected_encoding}' nicht gelesen werden:\n\n{e}")
+
+    def parse_file_with_encoding(self, file_path, encoding):
+        """Hilfsfunktion, um die Datei mit einem spezifischen Zeichensatz einzulesen."""
+        with open(file_path, 'r', encoding=encoding) as file:
+            content = file.read().replace('\n', '').replace('\r', '')
+            return self.parser.parse_content(content)
 
     # ==========================================
     # LOGIK: STRUKTURIERUNG DER DATEN
@@ -164,25 +199,44 @@ class EdifactViewerApp:
         self.display_tree(filtered_hierarchy, expand_all=True)
 
     def filter_hierarchy(self, nodes, query):
-        """Gibt nur die Knoten zurück, die den Suchbegriff enthalten (oder deren Kinder)."""
+        """Gibt Knoten zurück, bei denen der Titel, die Feldbeschreibungen (Keys) oder die Werte matchen."""
         filtered = []
         for node in nodes:
-            if node["type"] == "segment":
-                # Prüfe, ob einer der Werte im Segment den Suchbegriff enthält
-                match = any(query in str(v).lower() for v in node["data"].values() if v is not None)
-                # Alternativ auch den Segment-Namen durchsuchen
-                if query in node["data"].get("Segment", "").lower():
-                    match = True
-                    
-                if match:
-                    filtered.append(node)
-            else:
-                # Es ist ein Ordner (Message, Invoice, Group) -> Kinder durchsuchen
+            node_matches = False
+            
+            # 1. Prüfe den Titel des Knotens (z.B. "📁 Nachricht (UNH)", "📄 Rechnung (REC)", Segment-Namen)
+            if query in node.get("title", "").lower():
+                node_matches = True
+                
+            # 2. Wenn es ein Segment ist, durchsuche sowohl die Schlüssel (Beschreibungen) als auch die Werte
+            if node["type"] == "segment" and "data" in node:
+                for key, val in node["data"].items():
+                    # Prüft, ob der Suchbegriff im Feldnamen (Key) Oder im Inhalt (Value) steht
+                    if query in str(key).lower() or (val is not None and query in str(val).lower()):
+                        node_matches = True
+                        break
+            
+            # 3. Kinder rekursiv durchsuchen
+            filtered_children = []
+            if "children" in node:
                 filtered_children = self.filter_hierarchy(node["children"], query)
-                if filtered_children:
-                    new_node = node.copy()
+            
+            # Wenn der Knoten selbst matcht Oder Kinder gematcht haben:
+            if node_matches or filtered_children:
+                new_node = node.copy()
+                if node_matches:
+                    # Wenn der Ordner/Knoten selbst matcht (z.B. der Rechnungs-Ordner), 
+                    # zeigen wir standardmäßig alle Unterelemente an, falls keine spezifischen Kinder gefiltert wurden.
+                    if "children" in node and not filtered_children:
+                        new_node["children"] = node["children"]
+                    elif filtered_children:
+                        new_node["children"] = filtered_children
+                else:
+                    # Wenn er nur wegen seiner Kinder matcht, übernehmen wir nur die gefilterten Kinder
                     new_node["children"] = filtered_children
-                    filtered.append(new_node)
+                
+                filtered.append(new_node)
+                
         return filtered
 
     # ==========================================
@@ -209,9 +263,6 @@ class EdifactViewerApp:
                     insert_nodes(group_id, node["children"])
 
         insert_nodes("", hierarchy_data)
-
-# --- (Der if __name__ == "__main__": Block bleibt wie vorher) ---
-
 
 # --- Startpunkt des Programms ---
 if __name__ == "__main__":
