@@ -33,6 +33,13 @@ class EdifactViewerApp:
         self.btn_export = ttk.Button(top_frame, text="Daten exportieren...", command=self.export_data, state=tk.DISABLED)
         self.btn_export.pack(side=tk.LEFT, padx=(0, 10))
 
+        # --- NEU: Buttons zum Auf- und Zuklappen ---
+        self.btn_expand = ttk.Button(top_frame, text="Alles aufklappen", command=self.expand_all_tree, state=tk.DISABLED)
+        self.btn_expand.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.btn_collapse = ttk.Button(top_frame, text="Alles zuklappen", command=self.collapse_all_tree, state=tk.DISABLED)
+        self.btn_collapse.pack(side=tk.LEFT, padx=(0, 10))
+
         self.lbl_filename = ttk.Label(top_frame, text="Keine Datei ausgewählt", foreground="gray")
         self.lbl_filename.pack(side=tk.LEFT, padx=(0, 20))
 
@@ -53,9 +60,9 @@ class EdifactViewerApp:
         self.entry_search = ttk.Entry(search_frame, textvariable=self.search_var, width=25)
         self.entry_search.pack(side=tk.LEFT)
 
-        # --- NEU: Integriertes Statistik-Dashboard direkt in der GUI ---
-        self.stats_frame = ttk.LabelFrame(self.root, text="📊 Abrechnungs-Dashboard & Kennzahlen", padding="10")
-        self.stats_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0, 10))
+        # Integriertes Statistik-Dashboard
+        self.stats_frame = ttk.LabelFrame(self.root, text="   📊 Abrechnungs-Dashboard & Kennzahlen", padding="10")
+        self.stats_frame.pack(side=tk.TOP, fill=tk.X)
 
         self.stat_labels = {}
         metrics_keys = [
@@ -67,7 +74,6 @@ class EdifactViewerApp:
             ("total", "Summe Brutto:")
         ]
 
-        # Kompaktes Grid (2 Reihen, jeweils 3 Metriken nebeneinander)
         for idx, (key, label_text) in enumerate(metrics_keys):
             r = idx // 3
             c = (idx % 3) * 2
@@ -76,9 +82,9 @@ class EdifactViewerApp:
             val_lbl.grid(row=r, column=c+1, sticky=tk.W, pady=2, padx=(0, 30))
             self.stat_labels[key] = val_lbl
 
-        # 2. Hauptbereich: Treeview für die Datenstruktur
+        # 2. Hauptbereich: Treeview
         main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.pack(side=tk.TOP, expand=True, fill=tk.BOTH)
+        main_frame.pack(anchor="center", expand=True, fill=tk.BOTH)
 
         columns = ("Wert",)
         self.tree = ttk.Treeview(main_frame, columns=columns, selectmode="browse")
@@ -111,8 +117,11 @@ class EdifactViewerApp:
         self.search_var.set("")
 
         self.process_and_display()
-        # Buttons nach erfolgreichem Laden aktivieren
+        
+        # --- Alle Aktions-Buttons nach erfolgreichem Laden aktivieren ---
         self.btn_export.config(state=tk.NORMAL)
+        self.btn_expand.config(state=tk.NORMAL)
+        self.btn_collapse.config(state=tk.NORMAL)
 
     def reload_file_with_new_encoding(self, event=None):
         """Wird aufgerufen, wenn im Dropdown ein anderes Encoding ausgewählt wird."""
@@ -563,6 +572,26 @@ class EdifactViewerApp:
 
         except Exception as e:
             messagebox.showerror("Fehler beim PDF-Export", f"Das PDF konnte nicht erstellt werden:\n\n{e}")
+            
+    def expand_all_tree(self):
+        """Klappt alle Ordner und Segmente im Baum rekursiv auf."""
+        def set_open_state(item):
+            self.tree.item(item, open=True)
+            for child in self.tree.get_children(item):
+                set_open_state(child)
+        
+        for root_item in self.tree.get_children():
+            set_open_state(root_item)
+
+    def collapse_all_tree(self):
+        """Klappt alle Ordner und Segmente im Baum rekursiv zu."""
+        def set_close_state(item):
+            self.tree.item(item, open=False)
+            for child in self.tree.get_children(item):
+                set_close_state(child)
+        
+        for root_item in self.tree.get_children():
+            set_close_state(root_item)
 
 # --- Startpunkt des Programms ---
 if __name__ == "__main__":
