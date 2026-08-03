@@ -23,13 +23,13 @@ class EdifactViewerApp:
         self.setup_ui()
 
     def setup_ui(self):
+        # 1. Oberster Bereich: Buttons, Encoding und Suche
         top_frame = ttk.Frame(self.root, padding="10")
         top_frame.pack(side=tk.TOP, fill=tk.X)
 
         self.btn_open = ttk.Button(top_frame, text="EDIFACT Datei öffnen...", command=self.load_file)
         self.btn_open.pack(side=tk.LEFT, padx=(0, 10))
 
-        # --- NEU: Universeller Export-Button ---
         self.btn_export = ttk.Button(top_frame, text="Daten exportieren...", command=self.export_data, state=tk.DISABLED)
         self.btn_export.pack(side=tk.LEFT, padx=(0, 10))
 
@@ -53,7 +53,30 @@ class EdifactViewerApp:
         self.entry_search = ttk.Entry(search_frame, textvariable=self.search_var, width=25)
         self.entry_search.pack(side=tk.LEFT)
 
-        # Hauptbereich: Treeview
+        # --- NEU: Integriertes Statistik-Dashboard direkt in der GUI ---
+        self.stats_frame = ttk.LabelFrame(self.root, text="📊 Abrechnungs-Dashboard & Kennzahlen", padding="10")
+        self.stats_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0, 10))
+
+        self.stat_labels = {}
+        metrics_keys = [
+            ("sender", "Absender-IK:"),
+            ("receiver", "Empfänger-IK:"),
+            ("messages", "Nachrichten (UNH):"),
+            ("invoices", "Rechnungen (REC):"),
+            ("positions", "Positionen (EHE):"),
+            ("total", "Summe Brutto:")
+        ]
+
+        # Kompaktes Grid (2 Reihen, jeweils 3 Metriken nebeneinander)
+        for idx, (key, label_text) in enumerate(metrics_keys):
+            r = idx // 3
+            c = (idx % 3) * 2
+            ttk.Label(self.stats_frame, text=label_text, font=("Arial", 9, "bold")).grid(row=r, column=c, sticky=tk.W, pady=2, padx=(0, 5))
+            val_lbl = ttk.Label(self.stats_frame, text="-", font=("Arial", 9))
+            val_lbl.grid(row=r, column=c+1, sticky=tk.W, pady=2, padx=(0, 30))
+            self.stat_labels[key] = val_lbl
+
+        # 2. Hauptbereich: Treeview für die Datenstruktur
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(side=tk.TOP, expand=True, fill=tk.BOTH)
 
@@ -88,6 +111,7 @@ class EdifactViewerApp:
         self.search_var.set("")
 
         self.process_and_display()
+        # Buttons nach erfolgreichem Laden aktivieren
         self.btn_export.config(state=tk.NORMAL)
 
     def reload_file_with_new_encoding(self, event=None):
@@ -96,17 +120,77 @@ class EdifactViewerApp:
             self.process_and_display()
 
     def process_and_display(self):
-        """Lädt die Datei mit dem aktuell ausgewählten Encoding und aktualisiert den Baum."""
+        """Lädt die Datei mit dem aktuell gewählten Encoding, aktualisiert den Baum und das Dashboard."""
         selected_encoding = self.encoding_var.get()
         
         try:
-            # Wir übergeben das Encoding an eine neue Methode im Parser (oder öffnen sie direkt hier)
             flat_data = self.parse_file_with_encoding(self.current_filepath, selected_encoding)
             self.full_hierarchy = self.build_hierarchy(flat_data)
             self.display_tree(self.full_hierarchy)
+            
+            # --- NEU: Dashboard-Werte direkt aktualisieren ---
+            self.update_statistics()
+            
         except Exception as e:
             messagebox.showerror("Fehler beim Lesen", f"Die Datei konnte mit dem Encoding '{selected_encoding}' nicht gelesen werden:\n\n{e}")
 
+    def update_statistics(self):
+        """Berechnet die Kennzahlen aus der geladenen Hierarchie und füllt die Dashboard-Labels."""
+        if not hasattr(self, "full_hierarchy") or not self.full_hierarchy:
+            for lbl in self.stat_labels.values():
+                lbl.config(text="-")
+            return
+
+        num_messages = 0
+        num_invoices = 0
+        num_positions = 0
+        total_gross = 0.0
+        sender = "Unbekannt"
+        receiver = "Unbekannt"
+
+        def analyze_nodes(nodes):
+            nonlocal num_messages, num_invoices, num_positions, total_gross, sender, receiver
+            for node in nodes:
+                if node["type"] == "message":
+                    num_messages += 1
+                elif node["type"] == "invoice":
+                    num_invoices += 1
+                elif node["type"] == "segment":
+                    seg_data = node["data"]
+                    seg_name = seg_data.get("Segment")
+                    
+                    if seg_name == "UNB":
+                        sender = seg_data.get("Absender", sender)
+                        receiver = seg_data.get("Empfaenger", receiver)
+                    elif seg_name == "EHE":
+                        num_positions += 1
+                        betrag = seg_data.get("Einzelbetrag")
+                        if betrag:
+                            try:
+                                total_gross += float(betrag.replace(",", "."))
+                            except ValueError:
+                                pass
+                    elif seg_name == "BES":
+                        betrag = seg_data.get("Gesamtbetrag_Brutto")
+                        if betrag:
+                            try:
+                                total_gross += float(betrag.replace(",", "."))
+                            except ValueError:
+                                pass
+                                
+                if "children" in node:
+                    analyze_nodes(node["children"])
+
+        analyze_nodes(self.full_hierarchy)
+
+        # Labels im Dashboard aktualisieren
+        self.stat_labels["sender"].config(text=sender)
+        self.stat_labels["receiver"].config(text=receiver)
+        self.stat_labels["messages"].config(text=str(num_messages))
+        self.stat_labels["invoices"].config(text=str(num_invoices))
+        self.stat_labels["positions"].config(text=str(num_positions))
+        self.stat_labels["total"].config(text=f"{total_gross:,.2f} €" if total_gross > 0 else "0,00 €")
+        
     def parse_file_with_encoding(self, file_path, encoding):
         """Hilfsfunktion, um die Datei mit einem spezifischen Zeichensatz einzulesen."""
         with open(file_path, 'r', encoding=encoding) as file:
