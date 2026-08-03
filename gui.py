@@ -190,13 +190,13 @@ class EdifactViewerApp:
     def perform_search(self):
         query = self.search_var.get().strip().lower()
         if not query:
-            # Keine Suche: Kompletten Baum anzeigen
-            self.display_tree(self.full_hierarchy, expand_all=False)
+            # Keine Suche: Normalen Baum anzeigen, kein Highlighting
+            self.display_tree(self.full_hierarchy, expand_all=False, query="")
             return
 
         filtered_hierarchy = self.filter_hierarchy(self.full_hierarchy, query)
-        # Bei Suchtreffern klappen wir den Baum automatisch auf
-        self.display_tree(filtered_hierarchy, expand_all=True)
+        # Gefilterten Baum anzeigen und den Suchbegriff zum Markieren übergeben
+        self.display_tree(filtered_hierarchy, expand_all=True, query=query)
 
     def filter_hierarchy(self, nodes, query):
         """Gibt Knoten zurück, bei denen der Titel, die Feldbeschreibungen (Keys) oder die Werte matchen."""
@@ -242,24 +242,40 @@ class EdifactViewerApp:
     # ==========================================
     # LOGIK: ANZEIGE
     # ==========================================
-    def display_tree(self, hierarchy_data, expand_all=False):
+    def display_tree(self, hierarchy_data, expand_all=False, query=""):
         # Alte Baumstruktur komplett löschen
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        # Rekursive Funktion zum Einfügen der Knoten
+        # Tag für die Hervorhebung definieren (Ein sanftes Gelb/Pastell)
+        # Hinweis: Das funktioniert am besten, wenn das 'clam'-Theme aktiv ist (wird im __main__ gesetzt)
+        self.tree.tag_configure("highlight", background="#FFF3CD") 
+
+        # Rekursive Funktion zum Einfügen der Knoten mit Treffer-Prüfung
         def insert_nodes(parent_id, nodes):
             for node in nodes:
+                title = node["title"]
+                # Prüfen, ob der Titel des Ordners/Segments den Suchbegriff enthält
+                title_match = query and (query in title.lower())
+                
                 if node["type"] == "segment":
-                    # Ein normales Segment eintragen
-                    seg_id = self.tree.insert(parent_id, "end", text=node["title"], open=expand_all)
+                    # Tag setzen, falls der Segment-Titel matcht
+                    seg_tags = ("highlight",) if title_match else ()
+                    seg_id = self.tree.insert(parent_id, "end", text=title, open=expand_all, tags=seg_tags)
+                    
                     for key, value in node["data"].items():
                         if key == "Segment": continue
                         display_value = value if value is not None else ""
-                        self.tree.insert(seg_id, "end", text=f"  ↳ {key}", values=(display_value,))
+                        
+                        # Prüfen, ob Feldname (Key) Oder Inhalt (Value) den Suchbegriff enthält
+                        kv_match = query and (query in str(key).lower() or query in str(display_value).lower())
+                        item_tags = ("highlight",) if kv_match else ()
+                        
+                        self.tree.insert(seg_id, "end", text=f"  ↳ {key}", values=(display_value,), tags=item_tags)
                 else:
-                    # Ein Ordner (Nachricht, Rechnung, EHE-Gruppe)
-                    group_id = self.tree.insert(parent_id, "end", text=node["title"], open=expand_all)
+                    # Ordner (Message, Invoice, Group) einfügen
+                    group_tags = ("highlight",) if title_match else ()
+                    group_id = self.tree.insert(parent_id, "end", text=title, open=expand_all, tags=group_tags)
                     insert_nodes(group_id, node["children"])
 
         insert_nodes("", hierarchy_data)
