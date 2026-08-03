@@ -207,17 +207,71 @@ class EdifactSLLAParser:
                 "Art_der_Genehmigung": self._safe_get(elements, 2)
             }
 
+        # Segment UNB: Nutzdaten-Kopfsegment (Start der Datei)
+        elif name == "UNB":
+            syntax = self._safe_get(elements, 0, "").split(self.component_separator)
+            sender = self._safe_get(elements, 1, "").split(self.component_separator)
+            empfaenger = self._safe_get(elements, 2, "").split(self.component_separator)
+            datum_zeit = self._safe_get(elements, 3, "").split(self.component_separator)
+            
+            return {
+                "Segment": "UNB",
+                "Syntax_Kennung": syntax[0] if len(syntax) > 0 else None,
+                "Syntax_Version": syntax[1] if len(syntax) > 1 else None,
+                "Absender": sender[0] if len(sender) > 0 else None,
+                "Empfaenger": empfaenger[0] if len(empfaenger) > 0 else None,
+                "Erstellungsdatum": datum_zeit[0] if len(datum_zeit) > 0 else None,
+                "Erstellungszeit": datum_zeit[1] if len(datum_zeit) > 1 else None,
+                "Datenaustauschreferenz": self._safe_get(elements, 4)
+            }
+
+        # Segment UNH: Nachrichten-Kopfsegment (Start einer Einzelnachricht)
+        elif name == "UNH":
+            nachrichten_kennung = self._safe_get(elements, 1, "").split(self.component_separator)
+            
+            return {
+                "Segment": "UNH",
+                "Nachrichtenreferenznummer": self._safe_get(elements, 0),
+                "Nachrichtentyp": nachrichten_kennung[0] if len(nachrichten_kennung) > 0 else None,
+                "Versionsnummer": nachrichten_kennung[1] if len(nachrichten_kennung) > 1 else None
+            }
+
+        # Segment UNT: Nachrichten-Endesegment (Schließt das UNH-Segment ab)
+        elif name == "UNT":
+            return {
+                "Segment": "UNT",
+                "Anzahl_Segmente_in_Nachricht": self._safe_get(elements, 0),
+                "Nachrichtenreferenznummer": self._safe_get(elements, 1) # Muss identisch mit UNH sein
+            }
+
+        # Segment UNZ: Nutzdaten-Endesegment (Schließt das UNB-Segment ab)
+        elif name == "UNZ":
+            return {
+                "Segment": "UNZ",
+                "Anzahl_Nachrichten_in_Datei": self._safe_get(elements, 0),
+                "Datenaustauschreferenz": self._safe_get(elements, 1) # Muss identisch mit UNB sein
+            }
+        
+        # Segment NAM: Name (Erweiterte Namensangaben)
+        elif name == "NAM":
+            return {
+                "Segment": "NAM",
+                "Name_1": self._safe_get(elements, 0),
+                "Name_2": self._safe_get(elements, 1),
+                "Name_3": self._safe_get(elements, 2),
+                "Name_4": self._safe_get(elements, 3)
+            }
+
+        # Segment GES: Gesamtsummen der Rechnung / des Datenaustauschs
+        elif name == "GES":
+            return {
+                "Segment": "GES",
+                "Betrag_1": self._safe_get(elements, 0),
+                "Betrag_2": self._safe_get(elements, 1),
+                "Betrag_3": self._safe_get(elements, 2),
+                # Wir legen die Rohdaten dazu, falls es mehr Betragsfelder gibt
+                "Rohdaten": elements 
+            }
+
         # Rückgabe für Segmente, die noch nicht im Parser definiert sind
         return {"Segment": name, "Rohdaten": elements}
-
-# --- Beispielaufruf des Parsers ---
-if __name__ == "__main__":
-    # Ein fiktiver EDIFACT String basierend auf den Vorgaben der Anlage
-    # Beachte: Die Rechnungsnummer nutzt das Komponententrennzeichen ':'
-    sample_edifact = "FKT+01++123456789+987654321+111111111'REC+00234567:1+20251001+1'INV+A123456789+10000++B-998877'NAD+Mustermann+Max+19800101+Musterstr. 1+12345+Musterstadt'"
-    
-    parser = EdifactSLLAParser()
-    ergebnis = parser.parse_content(sample_edifact)
-    
-    for datensatz in ergebnis:
-        print(datensatz)
