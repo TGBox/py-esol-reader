@@ -2,6 +2,11 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import os
 
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+
 from esol_reader import EdifactSLLAParser
 
 class EdifactViewerApp:
@@ -18,55 +23,44 @@ class EdifactViewerApp:
         self.setup_ui()
 
     def setup_ui(self):
-        # --- Oberer Bereich: Buttons, Encoding-Auswahl und Suche ---
         top_frame = ttk.Frame(self.root, padding="10")
         top_frame.pack(side=tk.TOP, fill=tk.X)
 
-        # Dateiauswahl
         self.btn_open = ttk.Button(top_frame, text="EDIFACT Datei öffnen...", command=self.load_file)
         self.btn_open.pack(side=tk.LEFT, padx=(0, 10))
+
+        # --- NEU: PDF-Export Button ---
+        self.btn_pdf = ttk.Button(top_frame, text="Als PDF exportieren", command=self.export_to_pdf, state=tk.DISABLED)
+        self.btn_pdf.pack(side=tk.LEFT, padx=(0, 10))
 
         self.lbl_filename = ttk.Label(top_frame, text="Keine Datei ausgewählt", foreground="gray")
         self.lbl_filename.pack(side=tk.LEFT, padx=(0, 20))
 
-        # --- NEU: Encoding-Auswahl ---
+        # Encoding-Auswahl
         ttk.Label(top_frame, text="Encoding:").pack(side=tk.LEFT, padx=(5, 5))
-        
-        # Gängige Encodings für EDIFACT / Abrechnungsdaten
-        self.encoding_var = tk.StringVar(value="iso-8859-1") # Standard für § 302 SGB V
-        encoding_options = ["iso-8859-1", "iso-8859-15", "windows-1252", "utf-8", "ascii"]
-        
-        self.combo_encoding = ttk.Combobox(
-            top_frame, 
-            textvariable=self.encoding_var, 
-            values=encoding_options, 
-            width=12, 
-            state="readonly"
-        )
+        self.encoding_var = tk.StringVar(value="iso-8859-1")
+        encoding_options = ["iso-8859-1", "windows-1252", "utf-8", "ascii"]
+        self.combo_encoding = ttk.Combobox(top_frame, textvariable=self.encoding_var, values=encoding_options, width=12, state="readonly")
         self.combo_encoding.pack(side=tk.LEFT, padx=(0, 20))
-        # Wenn das Encoding gewechselt wird und bereits eine Datei offen ist, neu laden:
         self.combo_encoding.bind("<<ComboboxSelected>>", self.reload_file_with_new_encoding)
 
-        # Suchfeld (rechts)
+        # Suchfeld
         search_frame = ttk.Frame(top_frame)
         search_frame.pack(side=tk.RIGHT)
-        
         ttk.Label(search_frame, text="Suchen:").pack(side=tk.LEFT, padx=(0, 5))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *args: self.perform_search())
         self.entry_search = ttk.Entry(search_frame, textvariable=self.search_var, width=25)
         self.entry_search.pack(side=tk.LEFT)
 
-        # --- Hauptbereich: Treeview ---
+        # Hauptbereich: Treeview
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(side=tk.TOP, expand=True, fill=tk.BOTH)
 
         columns = ("Wert",)
         self.tree = ttk.Treeview(main_frame, columns=columns, selectmode="browse")
-        
         self.tree.heading("#0", text="Segment / Struktur", anchor=tk.W)
         self.tree.heading("Wert", text="Inhalt / Wert", anchor=tk.W)
-        
         self.tree.column("#0", width=400, minwidth=200)
         self.tree.column("Wert", width=550, minwidth=200)
 
@@ -89,12 +83,13 @@ class EdifactViewerApp:
         if not filepath: 
             return
 
-        # Den Dateipfad zwischenspeichern, damit man das Encoding später wechseln kann
         self.current_filepath = filepath
         self.lbl_filename.config(text=os.path.basename(filepath), foreground="black")
         self.search_var.set("")
 
         self.process_and_display()
+        # PDF-Button aktivieren, da nun Daten vorhanden sind
+        self.btn_pdf.config(state=tk.NORMAL)
 
     def reload_file_with_new_encoding(self, event=None):
         """Wird aufgerufen, wenn im Dropdown ein anderes Encoding ausgewählt wird."""
@@ -279,6 +274,89 @@ class EdifactViewerApp:
                     insert_nodes(group_id, node["children"])
 
         insert_nodes("", hierarchy_data)
+        
+    def export_to_pdf(self):
+        """Generiert ein übersichtliches PDF aus den geparsten Daten."""
+        if not hasattr(self, "full_hierarchy") or not self.full_hierarchy:
+            messagebox.showwarning("Keine Daten", "Es sind keine Daten zum Exportieren vorhanden.")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF Dokument", "*.pdf")],
+            title="PDF Bericht speichern unter..."
+        )
+        if not filepath:
+            return
+
+        try:
+            doc = SimpleDocTemplate(filepath, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+            story = []
+            styles = getSampleStyleSheet()
+            
+            title_style = ParagraphStyle(
+                'ReportTitle',
+                parent=styles['Heading1'],
+                fontSize=16,
+                spaceAfter=15,
+                textColor=colors.HexColor("#1A365D")
+            )
+            
+            h2_style = ParagraphStyle(
+                'ReportH2',
+                parent=styles['Heading2'],
+                fontSize=12,
+                spaceBefore=10,
+                spaceAfter=5,
+                textColor=colors.HexColor("#2B6CB0")
+            )
+
+            story.append(Paragraph("EDIFACT Abrechnungsbericht (§ 302 SGB V)", title_style))
+            story.append(Paragraph(f"Quelldatei: {os.path.basename(getattr(self, 'current_filepath', 'Unbekannt'))}", styles['Normal']))
+            story.append(Spacer(1, 15))
+
+            # Rekursive Funktion, um die Hierarchie in Tabellenstrukturen für das PDF zu gießen
+            def process_nodes_for_pdf(nodes):
+                for node in nodes:
+                    story.append(Paragraph(node["title"], h2_style))
+                    
+                    table_data = []
+                    def collect_segment_data(n):
+                        if n["type"] == "segment":
+                            for k, v in n["data"].items():
+                                if k == "Segment": continue
+                                table_data.append([str(k), str(v if v is not None else "")])
+                        elif "children" in n:
+                            for child in n["children"]:
+                                collect_segment_data(child)
+
+                    # Kinder sammeln und in eine Tabelle schreiben
+                    if "children" in node:
+                        for child in node["children"]:
+                            collect_segment_data(child)
+
+                    if table_data:
+                        t = Table(table_data, colWidths=[200, 335])
+                        t.setStyle(TableStyle([
+                            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F7FAFC")),
+                            ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor("#2D3748")),
+                            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                            ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+                            ('FONTSIZE', (0,0), (-1,-1), 9),
+                            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                            ('TOPPADDING', (0,0), (-1,-1), 4),
+                            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0"))
+                        ]))
+                        story.append(t)
+                        story.append(Spacer(1, 10))
+
+            process_nodes_for_pdf(self.full_hierarchy)
+            
+            doc.build(story)
+            messagebox.showinfo("Erfolg", f"Das PDF wurde erfolgreich gespeichert unter:\n{filepath}")
+
+        except Exception as e:
+            messagebox.showerror("Fehler beim PDF-Export", f"Das PDF konnte nicht erstellt werden:\n\n{e}")
 
 # --- Startpunkt des Programms ---
 if __name__ == "__main__":
